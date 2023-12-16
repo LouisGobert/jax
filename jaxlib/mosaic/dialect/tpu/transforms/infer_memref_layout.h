@@ -7,6 +7,8 @@
 namespace mlir::tpu {
 
 FailureOr<MemRefType> inferMemref(MemRefType memref, int hardware_generation);
+SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+                                        int64_t leading_tile_rows);
 
 }  // namespace mlir::tpu
 

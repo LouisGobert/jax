@@ -33,6 +33,24 @@ namespace mlir::tpu {
 #define GEN_PASS_DEF_INFERMEMREFLAYOUTPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
+SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+                                        int64_t leading_tile_rows) {
+  SmallVector<int64_t> tile_strides(memref_ty.getRank());
+  int64_t stride = 1;
+  for (int i = memref_ty.getRank() - 1; i >= 0; --i) {
+    tile_strides[i] = stride;
+    if (i == memref_ty.getRank() - 1) {
+      stride *= (memref_ty.getShape()[i] + 127) / 128;
+    } else if (i == memref_ty.getRank() - 2) {
+      stride *=
+          (memref_ty.getShape()[i] + leading_tile_rows - 1) / leading_tile_rows;
+    } else {
+      stride *= memref_ty.getShape()[i];
+    }
+  }
+  return tile_strides;
+}
+
 // Returns the number of 128-element groups in a tile.
 //
 // Arguments:
@@ -56,72 +74,58 @@ int getTilingFactor(const int num_128s, const int hardware_generation,
 
 FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
                                        const int hardware_generation) {
-  if (auto tiled_layout_attr =
-          dyn_cast<TiledLayoutAttr>(memref_ty.getLayout())) {
-    return tiled_layout_attr;
+  if (memref_ty.getRank() == 0) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "0-rank memref not supported");
   }
-  if (auto affine_map_attr = dyn_cast<AffineMapAttr>(memref_ty.getLayout())) {
-    if (memref_ty.getRank() == 0) {
-      return emitError(UnknownLoc::get(memref_ty.getContext()),
-                       "0-rank memref not supported");
-    }
-    if (!affine_map_attr.isIdentity()) {
-      return emitError(UnknownLoc::get(memref_ty.getContext()),
-                       "Non-identity affine layout");
-    }
-    if (!memref_ty.getElementType().isIntOrFloat()) {
-      return emitError(UnknownLoc::get(memref_ty.getContext()),
-                       "Invalid element type for memref");
-    }
-    const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
-    // Infer the layout
-    if (memref_ty.getRank() == 1) {
-      const int64_t leading_tile =
-          getTilingFactor(llvm::divideCeil(memref_ty.getShape().back(), 128),
-                          hardware_generation, bitwidth) *
-          128;
-      SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
-      if (bitwidth != 32) {
-        if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
-          return emitError(UnknownLoc::get(memref_ty.getContext()),
-                           "Unsupported bitwidth: ")
-                 << bitwidth;
-        }
-        tiles.append({xla::Tile({128}), xla::Tile({32 / bitwidth, 1})});
-      }
-      return TiledLayoutAttr::get(memref_ty.getContext(), tiles, {1});
-    }
-    // memref.getRank() > 1
-    const ArrayRef<int64_t> shape = memref_ty.getShape();
-    const int64_t second_minor = shape[shape.size() - 2];
-    const int64_t leading_tile_rows =
-        getTilingFactor(second_minor, hardware_generation, bitwidth);
-    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile_rows, 128})};
+
+  if (!memref_ty.getElementType().isIntOrFloat()) {
+    return emitError(UnknownLoc::get(memref_ty.getContext()),
+                     "Invalid element type for memref");
+  }
+  const int8_t bitwidth = memref_ty.getElementTypeBitWidth();
+  // Infer the layout
+  if (memref_ty.getRank() == 1) {
+    const int64_t leading_tile =
+        getTilingFactor(llvm::divideCeil(memref_ty.getShape().back(), 128),
+                        hardware_generation, bitwidth) *
+        128;
+    SmallVector<xla::Tile> tiles{xla::Tile({leading_tile})};
     if (bitwidth != 32) {
       if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
         return emitError(UnknownLoc::get(memref_ty.getContext()),
                          "Unsupported bitwidth: ")
                << bitwidth;
       }
-      tiles.push_back(xla::Tile({32 / bitwidth, 1}));
+      tiles.append({xla::Tile({128}), xla::Tile({32 / bitwidth, 1})});
     }
-    SmallVector<int64_t> tile_strides(memref_ty.getRank());
-    int64_t stride = 1;
-    for (int i = memref_ty.getRank() - 1; i >= 0; --i) {
-      tile_strides[i] = stride;
-      if (i == memref_ty.getRank() - 1) {
-        stride *= (memref_ty.getShape()[i] + 127) / 128;
-      } else if (i == memref_ty.getRank() - 2) {
-        stride *= (memref_ty.getShape()[i] + leading_tile_rows - 1) /
-                  leading_tile_rows;
-      } else {
-        stride *= memref_ty.getShape()[i];
-      }
-    }
-    return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
+    return TiledLayoutAttr::get(memref_ty.getContext(), tiles, {1});
   }
-  return emitError(UnknownLoc::get(memref_ty.getContext()),
-                   "Unrecognized layout annotation");
+
+  // memref.getRank() > 1
+  const ArrayRef<int64_t> shape = memref_ty.getShape();
+  const int64_t second_minor = shape[shape.size() - 2];
+  auto layout = dyn_cast<tpu::TiledLayoutAttr>(memref_ty.getLayout());
+  // For input/output args, use passed-in tiles.
+  int64_t leading_tile_rows =
+      (layout != nullptr)
+          ? layout.getTiles().front().dimensions()[0]
+          : getTilingFactor(second_minor, hardware_generation, bitwidth);
+  bool tile_is_2d = (layout != nullptr)
+                        ? layout.getTiles().front().dimensions().size() == 2
+                        : shape.size() >= 2;
+  SmallVector<xla::Tile> tiles{tile_is_2d ? xla::Tile({leading_tile_rows, 128})
+                                          : xla::Tile({leading_tile_rows})};
+  if (tile_is_2d && bitwidth != 32) {
+    if (!llvm::has_single_bit<unsigned>(bitwidth) || bitwidth > 32) {
+      return emitError(UnknownLoc::get(memref_ty.getContext()),
+                       "Unsupported bitwidth: ")
+             << bitwidth;
+    }
+    tiles.push_back(xla::Tile({32 / bitwidth, 1}));
+  }
+  auto tile_strides = ComputeTileStrides(memref_ty, leading_tile_rows);
+  return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
 }
 
 // Make sure only the first tile might introduce padding.
