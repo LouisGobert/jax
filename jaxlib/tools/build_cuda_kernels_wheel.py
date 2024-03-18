@@ -92,7 +92,23 @@ def prepare_wheel(
   plugin_dir = sources_path / f"jax_cuda{cuda_version}_plugin"
   copy_runfiles(
       dst_dir=plugin_dir / "nvvm" / "libdevice",
-      src_files=["local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc"],
+      src_files=[
+          "cuda_nvcc/nvvm/libdevice/libdevice.10.bc",
+      ],
+  )
+  build_utils.patch_so(
+      runfiles=r,
+      so_files=[
+          "__main__/jaxlib/cuda/_solver.so",
+          "__main__/jaxlib/cuda/_blas.so",
+          "__main__/jaxlib/cuda/_linalg.so",
+          "__main__/jaxlib/cuda/_prng.so",
+          "__main__/jaxlib/cuda/_rnn.so",
+          "__main__/jaxlib/cuda/_sparse.so",
+          "__main__/jaxlib/cuda/_triton.so",
+          "__main__/jaxlib/cuda/_versions.so",
+          "__main__/jaxlib/cuda_plugin_extension.so",
+      ],
   )
   copy_runfiles(
       dst_dir=plugin_dir,

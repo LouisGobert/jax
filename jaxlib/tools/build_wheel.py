@@ -21,7 +21,6 @@ import argparse
 import functools
 import os
 import pathlib
-import platform
 import re
 import subprocess
 import tempfile
@@ -66,10 +65,6 @@ parser.add_argument(
 args = parser.parse_args()
 
 r = runfiles.Create()
-
-
-def _is_mac():
-  return platform.system() == "Darwin"
 
 
 pyext = "pyd" if build_utils.is_windows() else "so"
@@ -139,7 +134,7 @@ def verify_mac_libraries_dont_reference_chkstack():
 
   This check makes sure we don't release wheels that have this dependency.
   """
-  if not _is_mac():
+  if not build_utils.is_mac():
     return
   nm = subprocess.run(
       ["nm", "-g", r.Rlocation("xla/xla/python/xla_extension.so")],
@@ -188,6 +183,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
   copy_runfiles(
       "__main__/jaxlib/init.py", dst_dir=jaxlib_dir, dst_filename="__init__.py"
   )
+  build_utils.patch_so(runfiles=r, so_files=["xla/xla/python/xla_extension.so"])
   copy_runfiles(
       dst_dir=jaxlib_dir,
       src_files=[
@@ -205,7 +201,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/gpu_sparse.py",
           "__main__/jaxlib/version.py",
           "__main__/jaxlib/xla_client.py",
-          f"__main__/jaxlib/xla_extension.{pyext}",
+          f"xla/xla/python/xla_extension.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing
@@ -214,6 +210,9 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
     pass
   patch_copy_xla_extension_stubs(jaxlib_dir)
 
+  build_utils.patch_so(
+      runfiles=r, so_files=["__main__/jaxlib/cpu/_ducc_fft.so"]
+  )
   copy_runfiles(
       dst_dir=jaxlib_dir / "cpu",
       src_files=[
@@ -225,7 +224,22 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
   if exists(f"__main__/jaxlib/cuda/_solver.{pyext}") and not skip_gpu_kernels:
     copy_runfiles(
         dst_dir=jaxlib_dir / "cuda" / "nvvm" / "libdevice",
-        src_files=["local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc"],
+        src_files=[
+            "cuda_nvcc/nvvm/libdevice/libdevice.10.bc",
+        ],
+    )
+    build_utils.patch_so(
+        runfiles=r,
+        so_files=[
+            "__main__/jaxlib/cuda/_solver.so",
+            "__main__/jaxlib/cuda/_blas.so",
+            "__main__/jaxlib/cuda/_linalg.so",
+            "__main__/jaxlib/cuda/_prng.so",
+            "__main__/jaxlib/cuda/_rnn.so",
+            "__main__/jaxlib/cuda/_sparse.so",
+            "__main__/jaxlib/cuda/_triton.so",
+            "__main__/jaxlib/cuda/_versions.so",
+        ],
     )
     copy_runfiles(
         dst_dir=jaxlib_dir / "cuda",
@@ -355,7 +369,11 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
   if build_utils.is_windows():
     capi_so = "__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll"
   else:
-    so_ext = "dylib" if _is_mac() else "so"
+    so_ext = "dylib" if build_utils.is_mac() else "so"
+    build_utils.patch_so(
+        runfiles=r,
+        so_files=["__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.so"],
+    )
     capi_so = f"__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.{so_ext}"
 
   mlir_libs_dir = jaxlib_dir / "mlir" / "_mlir_libs"

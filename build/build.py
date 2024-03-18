@@ -143,7 +143,7 @@ bazel_packages = {
 
 
 def download_and_verify_bazel():
-  """Downloads a bazel binary from Github, verifying its SHA256 hash."""
+  """Downloads a bazel binary from GitHub, verifying its SHA256 hash."""
   package = bazel_packages.get((platform.system(), platform.machine()))
   if package is None:
     return None
@@ -257,14 +257,12 @@ def get_clang_major_version(clang_path):
 
 
 def write_bazelrc(*, python_bin_path, remote_build,
-                  cuda_toolkit_path, cudnn_install_path,
-                  cuda_version, cudnn_version, rocm_toolkit_path,
+                  cuda_version, rocm_toolkit_path,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, bazel_options, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, use_clang, clang_path,
                   clang_major_version, enable_cuda, enable_nccl, enable_rocm,
                   build_gpu_plugin, enable_mosaic_gpu):
-  tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
     if not remote_build and python_bin_path:
@@ -285,25 +283,12 @@ def write_bazelrc(*, python_bin_path, remote_build,
         # https://github.com/openxla/xla/blob/c4277a076e249f5b97c8e45c8cb9d1f554089d76/.bazelrc#L505
         bazel_options.append("--copt=-Wno-gnu-offsetof-extensions\n")
 
-    if cuda_toolkit_path:
-      tf_cuda_paths.append(cuda_toolkit_path)
-      f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
-              .format(cuda_toolkit_path=cuda_toolkit_path))
-    if cudnn_install_path:
-      # see https://github.com/tensorflow/tensorflow/issues/51040
-      if cudnn_install_path not in tf_cuda_paths:
-        tf_cuda_paths.append(cudnn_install_path)
-      f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n"
-              .format(cudnn_install_path=cudnn_install_path))
-    if len(tf_cuda_paths):
-      f.write("build --action_env TF_CUDA_PATHS=\"{tf_cuda_paths}\"\n"
-              .format(tf_cuda_paths=",".join(tf_cuda_paths)))
     if cuda_version:
       f.write("build --action_env TF_CUDA_VERSION=\"{cuda_version}\"\n"
               .format(cuda_version=cuda_version))
-    if cudnn_version:
-      f.write("build --action_env TF_CUDNN_VERSION=\"{cudnn_version}\"\n"
-              .format(cudnn_version=cudnn_version))
+    elif enable_cuda:
+      f.write("build --action_env TF_CUDA_VERSION=\"{cuda_version}\"\n"
+              .format(cuda_version=DEFAULT_CUDA_VERSION))
     if cuda_compute_capabilities:
       f.write(
         f'build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"\n')
@@ -364,6 +349,8 @@ or
     python3 build.py
 to download and build JAX's XLA (jaxlib) dependency.
 """
+
+DEFAULT_CUDA_VERSION = "12"
 
 
 def _parse_string_as_bool(s):
@@ -493,21 +480,9 @@ def main():
       default=False,
       help_str="Should we build with RBE (Remote Build Environment)?")
   parser.add_argument(
-      "--cuda_path",
-      default=None,
-      help="Path to the CUDA toolkit.")
-  parser.add_argument(
-      "--cudnn_path",
-      default=None,
-      help="Path to CUDNN libraries.")
-  parser.add_argument(
       "--cuda_version",
       default=None,
       help="CUDA toolkit version, e.g., 11.1")
-  parser.add_argument(
-      "--cudnn_version",
-      default=None,
-      help="CUDNN version, e.g., 8")
   # Caution: if changing the default list of CUDA capabilities, you should also
   # update the list in .bazelrc, which is used for wheel builds.
   parser.add_argument(
@@ -558,12 +533,6 @@ def main():
   if args.verbose:
     logger.setLevel(logging.DEBUG)
 
-  if is_windows() and args.enable_cuda:
-    if args.cuda_version is None:
-      parser.error("--cuda_version is needed for Windows CUDA build.")
-    if args.cudnn_version is None:
-      parser.error("--cudnn_version is needed for Windows CUDA build.")
-
   if args.enable_cuda and args.enable_rocm:
     parser.error("--enable_cuda and --enable_rocm cannot be enabled at the same time.")
 
@@ -613,21 +582,13 @@ def main():
   print(f"Target CPU: {wheel_cpu}")
   print(f"Target CPU features: {args.target_cpu_features}")
 
-  cuda_toolkit_path = args.cuda_path
-  cudnn_install_path = args.cudnn_path
   rocm_toolkit_path = args.rocm_path
   print("CUDA enabled: {}".format("yes" if args.enable_cuda else "no"))
   if args.enable_cuda:
-    if cuda_toolkit_path:
-      print(f"CUDA toolkit path: {cuda_toolkit_path}")
-    if cudnn_install_path:
-      print(f"CUDNN library path: {cudnn_install_path}")
     if args.cuda_compute_capabilities is not None:
       print(f"CUDA compute capabilities: {args.cuda_compute_capabilities}")
-    if args.cuda_version:
-      print(f"CUDA version: {args.cuda_version}")
-    if args.cudnn_version:
-      print(f"CUDNN version: {args.cudnn_version}")
+    cuda_version = args.cuda_version if args.cuda_version else DEFAULT_CUDA_VERSION
+    print(f"CUDA version: {cuda_version}")
     print("NCCL enabled: {}".format("yes" if args.enable_nccl else "no"))
 
   print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
@@ -639,10 +600,7 @@ def main():
   write_bazelrc(
       python_bin_path=python_bin_path,
       remote_build=args.remote_build,
-      cuda_toolkit_path=cuda_toolkit_path,
-      cudnn_install_path=cudnn_install_path,
       cuda_version=args.cuda_version,
-      cudnn_version=args.cudnn_version,
       rocm_toolkit_path=rocm_toolkit_path,
       cpu=args.target_cpu,
       cuda_compute_capabilities=args.cuda_compute_capabilities,

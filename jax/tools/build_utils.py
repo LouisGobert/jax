@@ -30,6 +30,10 @@ def is_windows() -> bool:
   return sys.platform.startswith("win32")
 
 
+def is_mac():
+  return platform.system() == "Darwin"
+
+
 def copy_file(
     src_files: str | Sequence[str],
     dst_dir: pathlib.Path,
@@ -100,3 +104,38 @@ def update_setup_with_cuda_version(file_dir: pathlib.Path, cuda_version: str):
   )
   with open(src_file, "w") as f:
     f.write(content)
+
+
+def patch_so(runfiles, so_files) -> None:
+  """Patch *.so files.
+
+  We must patch *.so files otherwise auditwheel will fail.
+  """
+  if is_mac() or is_windows():
+    pass
+
+  libs_to_remove = [
+      "libcudart.so.12",
+      "libcudnn.so.8",
+      "libcudnn.so.8",
+      "libcudnn_ops_infer.so.8",
+      "libcudnn_cnn_infer.so.8",
+      "libcudnn_ops_train.so.8",
+      "libcudnn_cnn_train.so.8",
+      "libcudnn_adv_infer.so.8",
+      "libcudnn_adv_train.so.8",
+      "libcublas.so.12",
+      "libcurand.so.10",
+      "libcublasLt.so.12",
+      "libnccl.so.2",
+      "libcusolver.so.11",
+      "libcufft.so.11",
+      "libcupti.so.12",
+      "libcusparse.so.12",
+      "libnvJitLink.so.12",
+  ]
+  for f in so_files:
+    path = runfiles.Rlocation(f)
+    subprocess.run(["chmod", "+w", path], check=True)
+    for lib in libs_to_remove:
+      subprocess.run(["patchelf", "--remove-needed", lib, path], check=True)
