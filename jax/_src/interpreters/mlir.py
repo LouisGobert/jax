@@ -49,6 +49,7 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -970,6 +971,8 @@ def lower_jaxpr_to_module(
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
     replace_tokens_with_dummy = lowering_parameters.replace_tokens_with_dummy
+    if xla_extension_version >= 259:
+      replace_tokens_with_dummy = False
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects,
         name_stack=name_stack,
@@ -1445,7 +1448,7 @@ def lower_jaxpr_to_fun(
         outs.append(dummy_token())
     else:
       for eff in effects:
-        outs.append(tokens_out.get(eff))
+        outs.append(wrap_singleton_ir_values(tokens_out.get(eff)))
     for aval, out in zip(jaxpr.out_avals, out_vals):
       if replace_tokens_with_dummy and aval is core.abstract_token:
         outs.append(ir_constants(np.zeros((), np.bool_)))
