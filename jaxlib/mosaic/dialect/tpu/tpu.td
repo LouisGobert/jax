@@ -569,6 +569,20 @@ def MosaicSerdePass : Pass<"mosaic-serde", "::mlir::ModuleOp"> {
   let options = [Option<"serialize", "serialize", "bool", "", "">];
 }
 
+def LegalizationPass : Pass<"legalize", "::mlir::func::FuncOp"> {
+  let description = [{
+    Legalizes input function by eliminating transfer_read and transfer_write operations.
+  }];
+  let dependentDialects = [
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::tensor::TensorDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::tpu::TPUDialect",
+  ];
+  let constructor = "::mlir::tpu::createLegalizationPass()";
+}
+
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",
