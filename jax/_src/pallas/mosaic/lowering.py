@@ -2207,12 +2207,20 @@ def _semaphore_signal_lowering_rule(
     args_tree,
     device_id_type: tpu_primitives.DeviceIdType,
 ):
-  sem_aval, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers, value, device_id = tree_util.tree_unflatten(args_tree, args)
+  sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, indexers, value, device_id, core_index = tree_util.tree_unflatten(args_tree, args)
   sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  if core_index is not None:
+    assert device_id is not None
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
-  return tpu.SemaphoreSignalOp(sem, value, device_id=device_id).results
+    if core_index is None:
+      core_index = ir_constant(
+          0, mlir_type=mlir.dtype_to_ir_type(np.dtype("int32"))
+      )
+  return tpu.SemaphoreSignalOp(
+      sem, value, device_id=device_id, core_id=core_index
+  ).results
 
 
 lowering_rules[tpu_primitives.semaphore_signal_p] = (
