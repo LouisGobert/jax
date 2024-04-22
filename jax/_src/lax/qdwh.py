@@ -123,11 +123,13 @@ def _qdwh(x, m, n, is_hermitian, max_iterations, eps):
   # the smallest singular value of x.
   if eps is None:
     eps = float(jnp.finfo(x.dtype).eps)
-  alpha = (jnp.sqrt(jnp.linalg.norm(x, ord=1)) *
-           jnp.sqrt(jnp.linalg.norm(x, ord=jnp.inf))).astype(x.dtype)
-  l = eps
+  one_norm = jnp.linalg.norm(x, ord=1)
+  inf_norm = jnp.linalg.norm(x, ord=jnp.inf)
+  alpha_inverse = lax.rsqrt(one_norm) * lax.rsqrt(inf_norm)
+  alpha_inverse = jnp.where(one_norm == 0, 1, alpha_inverse)
+  u = x * alpha_inverse.astype(x.dtype)
 
-  u = x / alpha
+  l = eps
 
   # Iteration tolerances.
   tol_l = 10.0 * eps / 2.0
