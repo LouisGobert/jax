@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/py_client_gpu.h"
 #include "xla/status.h"
+#include "xla/stream_executor/cuda/cuda_driver.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 
@@ -91,5 +92,22 @@ NB_MODULE(cuda_plugin_extension, m) {
       nb::arg("c_api"), nb::arg("fn_name"), nb::arg("fn"),
       nb::arg("xla_platform_name"), nb::arg("api_version") = 0);
   m.def("registrations", &Registrations);
+  m.def(
+      "get_device_ordinal_from_cuda_array_interface",
+      [](const nb::dict& cai) {
+        if (!cai.contains("data")) {
+          xla::ThrowIfError(absl::InvalidArgumentError(
+              "CUDA Array Interface does not define `data`"));
+        }
+        auto data = nb::cast<nb::tuple>(cai["data"]);
+        auto data_value = nb::cast<std::intptr_t>(data[0]);
+        void* data_ptr = reinterpret_cast<void*>(data_value);
+        if (data_value == 0) {
+          return 0;
+        }
+        return stream_executor::gpu::CreatedContexts::GetDeviceOrdinal(
+            data_ptr);
+      },
+      nb::arg("cai"));
 }
 }  // namespace xla

@@ -29,6 +29,7 @@ import builtins
 import collections
 from collections.abc import Sequence
 from functools import partial
+import importlib
 import math
 import operator
 import types
@@ -74,6 +75,16 @@ from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis,
                            NumpyComplexWarning)
+
+for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib']:
+  try:
+    cuda_plugin_extension = importlib.import_module(
+        f'{pkg_name}.cuda_plugin_extension'
+    )
+  except ImportError:
+    cuda_plugin_extension = None  # type: ignore
+  else:
+    break
 
 newaxis = None
 T = TypeVar('T')
@@ -2199,7 +2210,20 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       if xla_extension_version >= 237:
         cai = object.__cuda_array_interface__
         backend = xla_bridge.get_backend("cuda")
-        object = xc._xla.cuda_array_interface_to_buffer(cai, backend)
+        if cuda_plugin_extension is None:
+          device_id = None
+        else:
+          device_id = cuda_plugin_extension.get_device_ordinal_from_cuda_array_interface(
+              cai
+          )
+        if xla_extension_version >= 260:
+          object = xc._xla.cuda_array_interface_to_buffer(
+              cai=cai, gpu_backend=backend, device_id=device_id
+          )
+        else:
+          object = xc._xla.cuda_array_interface_to_buffer(
+              cai=cai, gpu_backend=backend
+          )
 
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)

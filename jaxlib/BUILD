@@ -204,6 +204,7 @@ pybind_extension(
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/python/lib/core:numpy",
+        "@xla//xla/stream_executor/cuda:cuda_driver",
     ],
 )
 
