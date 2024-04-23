@@ -20,5 +20,9 @@ import jaxlib.mlir.passmanager as passmanager
 # TODO(phawkins): make this unconditional after jaxlib 0.4.22 is the minimum
 try:
   from jaxlib.mlir._mlir_libs import register_jax_dialects  # type: ignore
-except ImportError:
+except ImportError as e:
+  # The import might fail for reasons other than the library not being there,
+  # which makes this fallback really annoying while debugging.
+  if "undefined symbol" in e.msg:  # type: ignore
+    raise
   register_jax_dialects = None
